@@ -1,0 +1,11 @@
+# 构建产物
+dist/
+.modulecache/
+
+# 第三方二进制已随仓库提供（各约 71KB，MIT，声明见 THIRD-PARTY-NOTICES.md）
+# 若不希望入库，取消下面两行注释，改为让使用者自行获取
+# vendor/m1ddc
+# vendor/displayplacer
+
+# macOS
+.DS_Store
