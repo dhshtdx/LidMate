@@ -1,11 +1,11 @@
 # LidMate
+>一个用于笔记本电脑+外部显示器设置的小型macOS菜单栏应用程序：
 
-> A tiny macOS menu-bar app for laptop + external monitor setups:
-> **sleep on lid close**, and **auto-mirror the desktop to the laptop screen
-> when your monitor switches to another input source** (e.g. a gaming console
-> or a work PC on HDMI/DP), then restore the extended layout when it switches back.
->
-> [中文说明见下](#中文说明)
+> **当Mac连接显示器时合盖休眠**，**将桌面自动镜像到笔记本电脑屏幕上
+
+>当您的显示器切换到另一个输入源**（例如游戏机
+
+>或HDMI/DP上的工作PC），然后在切换回来时恢复扩展布局。
 
 ---
 
