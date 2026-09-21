@@ -2,9 +2,9 @@
 
 **中文** | [English](README.en.md)
 
-> **一个小巧的 macOS 菜单栏应用，专为「笔记本 + 外接显示器」的场景而生：
-> **合盖即休眠**；当显示器切换到其他信号源（比如游戏机，或接在 HDMI/DP 上的
-> 办公电脑）时，**自动把桌面镜像折叠到笔记本屏上**；切回来时再恢复扩展布局。**
+一个小巧的 macOS 菜单栏应用，专为「笔记本 + 外接显示器」的场景而生：
+**合盖即休眠**；当显示器切换到其他信号源（比如游戏机，或接在 HDMI/DP 上的
+办公电脑）时，**自动把桌面镜像折叠到笔记本屏上**；切回来时再恢复扩展布局。
 
 下载已编译版本 [![Download](https://img.shields.io/github/v/release/dhshtdx/LidMate?label=download&color=blue)](https://github.com/dhshtdx/LidMate/releases/latest)
 ---
