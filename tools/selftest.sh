@@ -12,7 +12,15 @@
 # ============================================================
 
 set -u
-BINDIR="${LIDMATE_BIN:-$(cd "$(dirname "$0")/.." && pwd)/vendor}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${LIDMATE_BIN:-}" ]; then
+  BINDIR="$LIDMATE_BIN"
+elif [ -x "$SCRIPT_DIR/../vendor/m1ddc" ]; then
+  BINDIR="$SCRIPT_DIR/../vendor"
+else
+  # 打包后的 App 里，自检脚本与第三方工具一起位于 Contents/Resources
+  BINDIR="$SCRIPT_DIR/bin"
+fi
 M1DDC="$BINDIR/m1ddc"
 DP="$BINDIR/displayplacer"
 

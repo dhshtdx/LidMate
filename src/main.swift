@@ -74,16 +74,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var resourcesURL: URL { Bundle.main.resourceURL ?? Bundle.main.bundleURL }
     private var bundledBinDir: String { resourcesURL.appendingPathComponent("bin").path }
 
-    private func runTool(_ path: String, _ args: [String]) -> String {
+    /// 跑一个外部工具并取回 stdout。
+    /// 必须带超时：DDC 读取在显示器断电 / 切到别的输入源时会一直不返回，
+    /// 而这些调用发生在主线程上，没有超时就是一次无法取消的转菊花。
+    private func runTool(_ path: String, _ args: [String], timeout: TimeInterval = 3) -> String {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: path)
         task.arguments = args
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
-        do { try task.run() } catch { return "" }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
+
+        var data = Data()
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do { try task.run() } catch { done.signal(); return }
+            data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            kill(task.processIdentifier, SIGKILL)
+            log("外部工具超时(\(Int(timeout))s): \((path as NSString).lastPathComponent) \(args.joined(separator: " "))")
+            return ""
+        }
         return String(data: data, encoding: .utf8) ?? ""
     }
 
@@ -132,9 +146,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return out
     }
 
+    /// 学习「本机输入码」：连读 3 次，读数一致才接受。
+    ///
+    /// 只读一次是不够的 —— 显示器切换输入源的那几秒里，VCP 0x60 会在
+    /// 本机码和一个恒定垃圾值（这台机器上是 2809）之间横跳。单次采样
+    /// 正好落在垃圾值上，就会把它当成「本机输入码」存下来，跟随逻辑
+    /// 从此整体反向，而且完全静默。
+    private func learnMacInput(uuid: String) -> String? {
+        var samples: [String] = []
+        for _ in 0..<3 {
+            guard let v = ddcInput(uuid: uuid) else { return nil }
+            samples.append(v)
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        guard Set(samples).count == 1 else {
+            log("学习 \(uuid.prefix(8)) 时读数不稳定: \(samples.joined(separator: ",")) → 放弃，避免学到垃圾值")
+            return nil
+        }
+        return samples[0]
+    }
     /// 自动识别内屏 / 外屏，并学习本机在显示器上占用的输入码
+    /// - Parameter preferred: 用户在菜单里明确点选的外屏 uuid
     @discardableResult
-    private func learnDisplays(verbose: Bool) -> Bool {
+    private func learnDisplays(verbose: Bool, preferred: String? = nil) -> Bool {
         let entries = displayList()
         guard !entries.isEmpty else {
             if verbose { info("读不到显示器列表", "请确认 displayplacer 能正常工作。") }
@@ -144,25 +178,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if verbose { info("没找到内置屏", "LidMate 只适用于带内置屏的 Mac 笔记本。") }
             return false
         }
-        // 外屏：优先沿用用户已选的；否则取第一块非内置屏
         let candidates = entries.filter { $0.uuid != internalDisplay.uuid }
         guard !candidates.isEmpty else {
             if verbose { info("没检测到外接显示器", "请接好外屏后再试。") }
             return false
         }
-        let saved = defaults.string(forKey: KEY_EXT_UUID) ?? ""
-        let external = candidates.first(where: { $0.uuid == saved }) ?? candidates[0]
 
-        defaults.set(internalDisplay.uuid, forKey: KEY_INT_UUID)
-        defaults.set(external.uuid, forKey: KEY_EXT_UUID)
+        // 用户主动触发时先确认：显示器此刻必须正显示这台 Mac。
+        // 否则学到的是"别的设备"的输入码，跟随功能会整个反过来。
+        if verbose && !confirmMonitorShowsThisMac() { return false }
 
-        guard let code = ddcInput(uuid: external.uuid) else {
+        // 候选顺序：用户点选的 → 上次存的 → 其余。
+        // 关键在于「逐块探测」：只有 VCP 0x60 真的读得出来的屏才能当外屏。
+        // Sidecar / 虚拟屏读不出来，会被自动跳过 —— 否则它一旦被学成外屏，
+        // 每轮读数都是 INVALID，工具会永久停在"切走"状态（就是这样"失灵"的）。
+        let saved = preferred ?? defaults.string(forKey: KEY_EXT_UUID) ?? ""
+        let ordered = candidates.filter { $0.uuid == saved } + candidates.filter { $0.uuid != saved }
+
+        var picked: (DisplayEntry, String)?
+        var tried: [String] = []
+        for d in ordered {
+            tried.append("· \(d.type) \(d.resolution)")
+            if let code = learnMacInput(uuid: d.uuid) {
+                picked = (d, code)
+                break
+            }
+        }
+        guard let (external, code) = picked else {
             if verbose {
-                info("读不到显示器的输入源",
-                     "这块显示器可能不支持通过 DDC 读取当前输入源（VCP 0x60），LidMate 无法在它上面工作。\n\n请先跑一下「显示器自检」。")
+                info("没有可用的外接显示器",
+                     """
+                     检测到的外接屏都读不到输入源（DDC VCP 0x60）：
+
+                     \(tried.joined(separator: "\n"))
+
+                     Sidecar / 虚拟屏不支持这个寄存器，会被自动跳过；
+                     真正的显示器请先跑一次「显示器自检」。
+                     """)
             }
             return false
         }
+
+        // 验证通过之后才落盘。旧版先把 uuid 写进去再去验证，
+        // 一旦选中读不到 DDC 的屏（比如 iPad），配置就被永久写脏了。
+        defaults.set(internalDisplay.uuid, forKey: KEY_INT_UUID)
+        defaults.set(external.uuid, forKey: KEY_EXT_UUID)
         defaults.set(code, forKey: KEY_MAC_INPUT)
         log("学习完成 内屏=\(internalDisplay.uuid) 外屏=\(external.uuid) 本机输入码=\(code)")
         if verbose {
@@ -170,6 +230,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                  "内屏：\(internalDisplay.resolution)\n外屏：\(external.type) \(external.resolution)\n本机输入码：\(code)\n\n现在可以打开「显示器跟随」了。")
         }
         return true
+    }
+
+    /// 学错输入码是唯一一个「功能静默反向」的故障，值得多问一句
+    private func confirmMonitorShowsThisMac() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "学习前请确认"
+        alert.informativeText = """
+        请让「跟随的显示器」此刻正显示这台 Mac（在显示器上切回本机输入源）再继续。
+
+        如果它正显示别的设备（游戏机 / 另一台电脑），LidMate 会把那个设备的输入码
+        误学成「本机」，跟随功能会整个反过来，而且不会有任何报错。
+        """
+        alert.addButton(withTitle: "现在显示的是本机，继续")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private var configReady: Bool {
@@ -211,7 +287,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         killStaleWatchers()
-        if !configReady { learnDisplays(verbose: false) }
+        // 这里原本是「配置不全就静默学一次」。去掉它：
+        // 静默学习无法确认显示器此刻显示的是不是本机，一旦正好撞上"切走"
+        // 状态，就会把垃圾值学成输入码。配置不全时交给首次启动的对话框，
+        // 或菜单里的「重新学习当前显示器」—— 两者都会先确认。
         rebuildMenu()
 
         if defaults.bool(forKey: KEY_CLAMSHELL) { startClamshell() }
@@ -235,6 +314,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopClamshell()
+        // 退出前一定要把扩展布局放回去：如果退出时外屏正切在别的设备上，
+        // 桌面就停在镜像状态，而进程一走就再没人还原它了。
+        if displayTask != nil { restoreLayout() }
         stopDisplayFollow()
         log("退出")
     }
@@ -284,10 +366,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private func stopDisplayFollow() { displayTask?.terminate(); displayTask = nil }
 
-    /// 关闭「显示器跟随」时还原扩展布局（重放脚本记录的档案）
+    /// 还原扩展布局（重放脚本记录的档案），并等它跑完（有上限，别拖住退出）。
+    /// 关闭跟随和退出 App 都走这里，两条路径行为一致。
+    ///
+    /// ⚠️ 2026-10-15 事故复盘：这里曾经**无条件 eval 档案**，既不校验内容、
+    ///    也不看退出码，最后还无条件写一句"已还原扩展双屏布局"。
+    ///    而屏幕瞬时离线时 `displayplacer list` 的重放行会退化成
+    ///    `displayplacer "id:外屏 enabled:false" "id:内屏 enabled:false"`——
+    ///    这个快照被存进档案后，退出 App 就等于把两块屏一起关掉：
+    ///    用户看到"一退出 LidMate 就黑屏"，日志里却写着还原成功。
+    ///    现在改为：先校验 → 再执行 → 按真实退出码报话。
     private func restoreLayout() {
         let profilePath = logURL.appendingPathExtension("layout").path
         guard FileManager.default.fileExists(atPath: profilePath) else { return }
+        guard let raw = try? String(contentsOfFile: profilePath, encoding: .utf8) else { return }
+
+        let profile = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard profile.hasPrefix("displayplacer "), !profile.contains("\n") else {
+            log("还原跳过：档案格式非法（不是单行 displayplacer 命令）")
+            return
+        }
+        // 唯一能"一键把桌面搞黑"的路径就是重放一条关屏命令 —— 直接拒绝
+        guard !profile.contains("enabled:false") else {
+            log("还原跳过：档案含 enabled:false（会把屏关掉），已忽略；请让跟随功能重新记录一次")
+            return
+        }
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
         task.arguments = ["-c", "eval \"$(sed 's|^displayplacer|DPPATH|' 'PROFILEPATH')\""]
@@ -295,8 +399,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                      .replacingOccurrences(of: "PROFILEPATH", with: profilePath) }
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
-        try? task.run()
-        log("已请求还原扩展双屏布局")
+        do { try task.run() } catch { return }
+        let deadline = Date().addingTimeInterval(3)
+        while task.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        let timedOut = task.isRunning
+        if timedOut { task.terminate() }
+        if !timedOut && task.terminationStatus == 0 {
+            log("已还原扩展双屏布局")
+        } else {
+            log("还原扩展布局失败（displayplacer 退出码=\(task.terminationStatus)\(timedOut ? "，超时被终止" : "")），桌面可能仍是折叠状态")
+        }
     }
 
     /// 清掉上一次运行残留的守护脚本（App 被强杀时子进程会变成孤儿）
@@ -434,6 +546,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openLog.target = self
         menu.addItem(openLog)
 
+        let doctor = NSMenuItem(title: "只读诊断（不改布局）",
+                                action: #selector(runDoctor), keyEquivalent: "")
+        doctor.target = self
+        menu.addItem(doctor)
+
         menu.addItem(.separator())
 
         let about = NSMenuItem(title: "关于 \(APP_NAME)", action: #selector(showAbout), keyEquivalent: "")
@@ -471,8 +588,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func pickExternal(_ sender: NSMenuItem) {
         guard let uuid = sender.representedObject as? String else { return }
-        defaults.set(uuid, forKey: KEY_EXT_UUID)
-        _ = learnDisplays(verbose: true)
+        // 不要先写 KEY_EXT_UUID：这块屏可能就是读不到 DDC 的（Sidecar/iPad），
+        // 先写再验证失败，配置就被永久写脏了。交给 learnDisplays 验证后落盘。
+        guard learnDisplays(verbose: true, preferred: uuid) else {
+            rebuildMenu()
+            return
+        }
         if displayTask != nil { stopDisplayFollow(); startDisplayFollow() }
         rebuildMenu()
     }
@@ -486,13 +607,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func runSelftest() {
-        let script = resourcesURL.appendingPathComponent("selftest.sh")
+        openInTerminal("selftest.sh")
+    }
+
+    /// 只读诊断：把它跑在终端里，输出可以直接贴出来看
+    @objc private func runDoctor() {
+        openInTerminal("doctor.sh")
+    }
+
+    private func openInTerminal(_ scriptName: String) {
+        let script = resourcesURL.appendingPathComponent(scriptName)
         let term = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
         if FileManager.default.fileExists(atPath: script.path) {
             NSWorkspace.shared.open([script], withApplicationAt: term,
                                     configuration: NSWorkspace.OpenConfiguration())
         } else {
-            info("找不到自检脚本", "selftest.sh 没有被打包进来。")
+            info("找不到脚本 \(scriptName)", "\(scriptName) 没有被打包进来。")
         }
     }
 

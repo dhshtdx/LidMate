@@ -13,7 +13,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/LidMate.app"
 CONTENTS="$APP/Contents"
-CACHE="$ROOT/.modulecache"
+CACHE="$DIST/.modulecache"
 
 echo "==> 清理"
 rm -rf "$DIST"
@@ -32,6 +32,8 @@ cp "$ROOT/src/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/src/resources/clamshell.sh"   "$CONTENTS/Resources/"
 cp "$ROOT/src/resources/displaysync.sh" "$CONTENTS/Resources/"
 cp "$ROOT/tools/selftest.sh"            "$CONTENTS/Resources/"
+cp "$ROOT/tools/doctor.sh"              "$CONTENTS/Resources/"
+cp "$ROOT/tools/test-profile-guard.sh"  "$CONTENTS/Resources/"
 chmod +x "$CONTENTS/Resources/"*.sh
 
 for bin in m1ddc displayplacer; do
@@ -60,15 +62,18 @@ iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns"
 rm -rf "$ICONSET" "$ICON_PNG" "$DIST/makeicon"
 
 echo "==> ad-hoc 签名"
-codesign --force --deep --sign - "$APP" 2>/dev/null || echo "   (签名跳过，不影响本机使用)"
+xattr -cr "$APP"
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
 
 echo "==> 打包 DMG"
-STAGE="$DIST/stage"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/LidMate-stage.XXXXXX")
+trap 'rm -rf "$STAGE"' EXIT
+ditto --noextattr "$APP" "$STAGE/LidMate.app"
+xattr -cr "$STAGE/LidMate.app"
+codesign --verify --deep --strict "$STAGE/LidMate.app"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "LidMate" -srcfolder "$STAGE" -ov -format UDZO "$DIST/LidMate.dmg" >/dev/null
-rm -rf "$STAGE"
+hdiutil create -volname "LidMate" -srcfolder "$STAGE" -fs HFS+ -ov -format UDZO "$DIST/LidMate.dmg" >/dev/null
 
 echo
 echo "✅ 构建完成"
