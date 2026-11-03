@@ -6,7 +6,7 @@
 > **合盖即休眠**；当显示器切换到其他信号源（比如游戏机，或接在 HDMI/DP 上的
 > 办公电脑）时，**自动把桌面镜像折叠到笔记本屏上**；切回来时再恢复扩展布局。
 
-**下载 Apple Silicon 安装包：** [LidMate-macOS-arm64.dmg](downloads/LidMate-macOS-arm64.dmg)
+**下载 Apple Silicon 安装包：** [LidMate-macOS-arm64.dmg](https://github.com/dhshtdx/LidMate/releases/download/v1.0.1/LidMate-macOS-arm64.dmg)
 
 ---
 
