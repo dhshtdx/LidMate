@@ -1,0 +1,26 @@
+name: Publish LidMate v1.0.1
+
+"on":
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-v1.0.1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release with DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -f downloads/LidMate-macOS-arm64.dmg
+          gh release create v1.0.1 downloads/LidMate-macOS-arm64.dmg \
+            --target "$GITHUB_SHA" \
+            --title "LidMate v1.0.1" \
+            --notes "修复镜像切换后笔记本屏幕黑边和布局恢复问题；改进打包与签名校验。适用于 Apple Silicon、macOS 13+。安装包采用临时签名，未经过 Apple 公证。"
