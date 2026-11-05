@@ -1,0 +1,26 @@
+name: Publish LidMate v1.0.2
+
+"on":
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-v1.0.2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and publish DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "5839e380b002b2e5fdea8aad3a9076fb52431ff9978a300083d38469e50452f2  downloads/LidMate-macOS-arm64.dmg" | sha256sum -c -
+          gh release create v1.0.2 downloads/LidMate-macOS-arm64.dmg \
+            --target "$GITHUB_SHA" \
+            --title "LidMate v1.0.2" \
+            --notes "修复 displayplacer 单行模式格式导致共同镜像模式被误判为空、外屏切换无响应的问题；兼容旧版两行格式。适用于 Apple Silicon、macOS 13+。安装包采用临时签名，未经过 Apple 公证。"

@@ -126,18 +126,24 @@ displays_dump() {
     END { flush() }'
 }
 
-# 某块屏支持的所有模式，输出 "res:WxH hz:N"。
-# displayplacer v1.4.0 的格式是两行一组：
+# 某块屏支持的所有模式，输出 "res:WxH N"。
+# displayplacer 的模式行有两种格式：
+#   mode 3: res:1920x1080 hz:144 color_depth:8
 #   mode 3: res:1920x1080
 #    hz:144
-# 旧写法只取了 mode 行的 $3/$4，得到 "res:1920x1080" 而丢掉 hz，
-# 导致 common_modes 求交时永远匹配不上 —— 镜像候选实际只剩内屏当前模式。
+# 两种格式都要提取刷新率，否则公共模式会被误判为空。
 modes_of() {
   "$DP" list 2>/dev/null | awk -v want="$1" '
-    /^Persistent screen id: / { cur = $4; next }
-    /^  mode / && cur == want { mres = $3; next }
-    # 这一行形如 " hz:60"（行首一个空格），awk 会把 hz:60 当成 $1。
-    /^ hz:/ && cur == want && mres != "" {
+    /^Persistent screen id: / { cur = $4; mres = ""; next }
+    /^  mode / && cur == want {
+      mres = $3
+      if (mres !~ /^res:[0-9]+x[0-9]+$/) { mres = ""; next }
+      if ($4 ~ /^hz:[0-9]+$/) {
+        hz = $4; sub(/^hz:/, "", hz); print mres, hz; mres = ""
+      }
+      next
+    }
+    /^[[:space:]]+hz:/ && cur == want && mres != "" {
       hz = $1; sub(/^hz:/, "", hz); print mres, hz; mres = ""
     }'
 }
@@ -190,7 +196,7 @@ common_modes() {
   rm -f "$fa" "$fb"
 }
 
-# internal_restore_mode / modes_of 输出的是 "res:WxH hz:N"。
+# internal_restore_mode / modes_of 输出的是 "res:WxH N"。
 # 拼 displayplacer 命令时必须去掉 res: 前缀，否则会变成 res:res:1280x800
 # —— 旧版正是因为这个 SIGSEGV。
 strip_res() { local v="$1"; printf '%s' "${v#res:}"; }
@@ -242,7 +248,7 @@ mirror_candidates() {
   fi
 
   # 内屏当前模式若不在公共模式里（解析差异/刷新率不同），作为兼容兜底。
-  if [ -n "$ir" ] && modes_of "$EXT_UUID" | grep -q "^res:$ir hz:$ih$"; then
+  if [ -n "$ir" ] && modes_of "$EXT_UUID" | grep -q "^res:$ir $ih$"; then
     case "$seen" in
       *" $ir $ih "*) ;;
       *) printf '%s %s\n' "$ir" "$ih" ;;
@@ -677,8 +683,7 @@ if [ "${LIDMATE_DOCTOR:-0}" = "1" ]; then
     if modes_of "$EXT_UUID" | grep -q "^res:$inres "; then
       echo "外屏支持这个模式    : 是 ✅（镜像直接用内屏分辨率，笔记本桌面不变形）"
     else
-      echo "外屏支持这个模式    : 否 ❌ ← 旧版死在这里：mirror 整条命令失败，"
-      echo "                        报错被丢弃、状态被锁死 → 切换了却毫无变化"
+      echo "外屏支持这个模式    : 否（将尝试下方的共同模式）"
     fi
   fi
   echo "镜像实际会用的模式（按优先级）:"

@@ -7,7 +7,7 @@
 > when your monitor switches to another input source** (e.g. a gaming console
 > or a work PC on HDMI/DP), then restore the extended layout when it switches back.
 
-**Download for Apple Silicon:** [LidMate-macOS-arm64.dmg](https://github.com/dhshtdx/LidMate/releases/download/v1.0.1/LidMate-macOS-arm64.dmg)
+**Download for Apple Silicon:** [LidMate-macOS-arm64.dmg](https://github.com/dhshtdx/LidMate/releases/download/v1.0.2/LidMate-macOS-arm64.dmg)
 
 ---
 
