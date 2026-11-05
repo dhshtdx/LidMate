@@ -6,7 +6,7 @@
 > **合盖即休眠**；当显示器切换到其他信号源（比如游戏机，或接在 HDMI/DP 上的
 > 办公电脑）时，**自动把桌面镜像折叠到笔记本屏上**；切回来时再恢复扩展布局。
 
-**下载 Apple Silicon 安装包：** [LidMate-macOS-arm64.dmg](https://github.com/dhshtdx/LidMate/releases/download/v1.0.3/LidMate-macOS-arm64.dmg)
+**下载 Apple Silicon 安装包：** [LidMate-macOS-arm64.dmg](https://github.com/dhshtdx/LidMate/releases/download/v1.0.5/LidMate-macOS-arm64.dmg)
 
 ---
 
@@ -43,6 +43,13 @@ LidMate 每秒检查一次盖子状态，合上就执行 `pmset sleepnow`。
 - 菜单栏、Dock 全都在笔记本上
 
 切回本机信号源后自动还原成扩展布局。
+
+镜像时会先用笔记本内屏的正常分辨率，让 macOS 自动选择两块屏的刷新率。
+如果这个方式失败，再回退到两块屏模式列表里的共同模式。回退模式的宽高比
+若与内屏不同，镜像期间仍可能出现黑边；切回本机输入后会恢复原来的分辨率。
+
+如果切回后只有内屏顶部留下一条约菜单栏高度的黑带，请检查内屏上是否仍有
+全屏应用窗口。退出那个窗口的全屏后，macOS 会重新显示菜单栏和摄像头两侧区域。
 
 ---
 

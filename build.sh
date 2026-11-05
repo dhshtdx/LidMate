@@ -2,7 +2,7 @@
 # ============================================================
 #  LidMate 构建脚本
 #
-#  产出：dist/LidMate.app  和  dist/LidMate.dmg
+#  产出：dist/LidMate.dmg
 #  用法：bash build.sh
 #
 #  依赖：Xcode Command Line Tools（swiftc / iconutil / hdiutil / codesign）
@@ -11,13 +11,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 DIST="$ROOT/dist"
-APP="$DIST/LidMate.app"
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/LidMate-stage.XXXXXX")
+trap 'rm -rf "$STAGE"' EXIT
+APP="$STAGE/LidMate.app"
 CONTENTS="$APP/Contents"
-CACHE="$DIST/.modulecache"
+CACHE="$STAGE/.modulecache"
 
 echo "==> 清理"
 rm -rf "$DIST"
-mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/bin" "$CACHE"
+mkdir -p "$DIST" "$CONTENTS/MacOS" "$CONTENTS/Resources/bin" "$CACHE"
 
 echo "==> 编译主程序"
 swiftc -O -swift-version 5 \
@@ -47,19 +49,19 @@ done
 chmod +x "$CONTENTS/Resources/bin/"*
 
 echo "==> 生成图标"
-ICON_PNG="$DIST/icon.png"
+ICON_PNG="$STAGE/icon.png"
 swiftc -O -swift-version 5 -module-cache-path "$CACHE" \
-  -o "$DIST/makeicon" "$ROOT/tools/makeicon.swift" -framework Cocoa
-"$DIST/makeicon" "$ICON_PNG" >/dev/null
+  -o "$STAGE/makeicon" "$ROOT/tools/makeicon.swift" -framework Cocoa
+"$STAGE/makeicon" "$ICON_PNG" >/dev/null
 
-ICONSET="$DIST/AppIcon.iconset"
+ICONSET="$STAGE/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do
   sips -z "$s" "$s" "$ICON_PNG" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
   sips -z "$((s * 2))" "$((s * 2))" "$ICON_PNG" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns"
-rm -rf "$ICONSET" "$ICON_PNG" "$DIST/makeicon"
+rm -rf "$ICONSET" "$ICON_PNG" "$STAGE/makeicon"
 
 echo "==> ad-hoc 签名"
 xattr -cr "$APP"
@@ -67,16 +69,12 @@ codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 
 echo "==> 打包 DMG"
-STAGE=$(mktemp -d "${TMPDIR:-/tmp}/LidMate-stage.XXXXXX")
-trap 'rm -rf "$STAGE"' EXIT
-ditto --noextattr "$APP" "$STAGE/LidMate.app"
-xattr -cr "$STAGE/LidMate.app"
-codesign --verify --deep --strict "$STAGE/LidMate.app"
 ln -s /Applications "$STAGE/Applications"
+# 打包目录只保留应用和 Applications 快捷方式。
+rm -rf "$CACHE"
 hdiutil create -volname "LidMate" -srcfolder "$STAGE" -fs HFS+ -ov -format UDZO "$DIST/LidMate.dmg" >/dev/null
 
 echo
 echo "✅ 构建完成"
-echo "   App : $APP"
 echo "   DMG : $DIST/LidMate.dmg"
 du -sh "$DIST/LidMate.dmg" | awk '{print "   体积: "$1}'

@@ -183,7 +183,7 @@ mode_matches_native() {
   aspect_close "$a" "$b"
 }
 
-# 两块屏都支持的模式，按像素数从大到小排（镜像对只能跑其中一个模式）
+# 两块屏列表里完全一致的模式，用作自动刷新率方案失败时的回退。
 common_modes() {
   local fa fb
   fa=$(mktemp) || return 1
@@ -202,7 +202,9 @@ common_modes() {
 strip_res() { local v="$1"; printf '%s' "${v#res:}"; }
 
 # 镜像可以用的模式候选（顺序即优先级），每行 "res hz"。
-# 镜像对（id:内屏+外屏）只能跑一个 res/hz，所以候选必须是外屏也支持的模式。
+# 先让 macOS 用内屏正常分辨率自行选择两块屏的刷新率；本机实测此时
+# 内屏 1496x967@120、外屏 1496x967@144，尽管外屏模式列表没有该分辨率。
+# 失败后才回退到两块屏列表里完全一致的模式。
 #
 # 排序原则：**按比例接近程度排序，再按像素数排序**。
 # 镜像时内屏会被切到候选模式；如果选了比例不一致的模式（例如 1.547 的
@@ -210,10 +212,17 @@ strip_res() { local v="$1"; printf '%s' "${v#res:}"; }
 # 出现在「桌面被镜像到错误比例」的瞬间，绝不该成为稳定状态。
 # 哪怕所有公共模式都不是原生比例，也选最接近的那个，把黑边压到最小。
 mirror_candidates() {
-  local dump ir ih native m seen=" "
+  local dump ir ih native m normal normal_res seen=" "
   dump=$(displays_dump)
   read -r ir ih _ _ <<< "$(printf '%s\n' "$dump" | awk -F'|' -v id="$INT_UUID" '$1==id{print $2" "$3" "$4" "$5}')"
   native=$(native_aspect 2>/dev/null || true)
+
+  normal=$(internal_restore_mode 2>/dev/null || true)
+  normal_res=$(strip_res "${normal%% *}")
+  if [ -n "$normal_res" ] && mode_matches_native "$normal_res"; then
+    printf '%s auto\n' "$normal_res"
+    seen="$seen$normal_res auto "
+  fi
 
   # 公共模式：按「与内屏原生比例的距离」升序，再按像素数降序。
   # 注意：这块用 < <(...) 而不是管道，所以内层 awk 能直接看到外层的 nat。
@@ -263,7 +272,11 @@ preview_mirror_command() {
   read -r res hz _ <<< "$(mirror_candidates | head -1)"
   [ -n "${res:-}" ] || return 1
 
-  args=( "id:$INT_UUID+$EXT_UUID res:$res hz:$hz color_depth:8 scaling:on origin:(0,0) degree:0" )
+  if [ "$hz" = auto ]; then
+    args=( "id:$INT_UUID+$EXT_UUID res:$res scaling:on origin:(0,0) degree:0" )
+  else
+    args=( "id:$INT_UUID+$EXT_UUID res:$res hz:$hz color_depth:8 scaling:on origin:(0,0) degree:0" )
+  fi
 
   printf 'displayplacer'
   for x in "${args[@]}"; do printf ' "%s"' "$x"; done
@@ -529,7 +542,12 @@ restore_profile() {
 #    镜像对上（笔记本屏），iPad 原地不动、由 macOS 自己贴着排。
 run_mirror_with_mode() {
   local res="$1" hz="$2" depth="$3" scaling="$4"
-  local args=( "id:$INT_UUID+$EXT_UUID res:$res hz:$hz color_depth:${depth:-8} scaling:${scaling:-on} origin:(0,0) degree:0" )
+  local args
+  if [ "$hz" = auto ]; then
+    args=( "id:$INT_UUID+$EXT_UUID res:$res scaling:${scaling:-on} origin:(0,0) degree:0" )
+  else
+    args=( "id:$INT_UUID+$EXT_UUID res:$res hz:$hz color_depth:${depth:-8} scaling:${scaling:-on} origin:(0,0) degree:0" )
+  fi
   local err rc sig
 
   err=$("$DP" "${args[@]}" 2>&1 >/dev/null)
@@ -569,7 +587,7 @@ apply_mirror() {
   done < <(mirror_candidates)
 
   if [ "${#candidates[@]}" -eq 0 ]; then
-    log "镜像失败：内屏和外屏没有任何共同模式，无法镜像"
+    log "镜像失败：没有可用候选模式"
     return 1
   fi
 
@@ -595,7 +613,7 @@ apply_mirror() {
         aspect_native=$(native_aspect 2>/dev/null || true)
         if [ -n "$aspect_now" ] && [ -n "$aspect_native" ]; then
           if ! awk -v a="$aspect_now" -v b="$aspect_native" 'BEGIN { d = a - b; if (d < 0) d = -d; exit (d <= b * 0.015) ? 0 : 1 }'; then
-            log "  ↳ 注意：镜像模式 $after 与内屏原生比例 $aspect_native 不一致（$aspect_now），内屏可能出现黑边"
+            log "  ↳ 注意：镜像模式 $after 与内屏原生比例 $aspect_native 不一致（${aspect_now}），内屏可能出现黑边"
           fi
         fi
         if pair_is_primary; then
@@ -683,12 +701,14 @@ if [ "${LIDMATE_DOCTOR:-0}" = "1" ]; then
     if modes_of "$EXT_UUID" | grep -q "^res:$inres "; then
       echo "外屏支持这个模式    : 是 ✅（镜像直接用内屏分辨率，笔记本桌面不变形）"
     else
-      echo "外屏支持这个模式    : 否（将尝试下方的共同模式）"
+      echo "外屏支持这个模式    : 未列出（先试内屏模式的自动刷新率，再试共同模式）"
     fi
   fi
   echo "镜像实际会用的模式（按优先级）:"
   if mirror_candidates | grep -q .; then
-    while IFS=' ' read -r r h; do echo "  ${r} @ ${h}Hz"; done < <(mirror_candidates)
+    while IFS=' ' read -r r h; do
+      if [ "$h" = auto ]; then echo "  ${r} @ 自动刷新率"; else echo "  ${r} @ ${h}Hz"; fi
+    done < <(mirror_candidates)
   else
     echo "  （一个都没有 → 这两块屏无法镜像折叠）"
   fi

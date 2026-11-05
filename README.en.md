@@ -7,7 +7,7 @@
 > when your monitor switches to another input source** (e.g. a gaming console
 > or a work PC on HDMI/DP), then restore the extended layout when it switches back.
 
-**Download for Apple Silicon:** [LidMate-macOS-arm64.dmg](https://github.com/dhshtdx/LidMate/releases/download/v1.0.3/LidMate-macOS-arm64.dmg)
+**Download for Apple Silicon:** [LidMate-macOS-arm64.dmg](https://github.com/dhshtdx/LidMate/releases/download/v1.0.5/LidMate-macOS-arm64.dmg)
 
 ---
 
@@ -51,6 +51,15 @@ over to a Windows PC or a game console):
 - The menu bar and Dock stay on the laptop
 
 Switching back to the Mac's input restores the extended layout automatically.
+
+Mirroring first tries the laptop's normal resolution and lets macOS choose each
+screen's refresh rate. If that fails, LidMate falls back to a mode listed for
+both screens. A fallback mode with a different aspect ratio may still cause black
+bars while mirroring. Switching back restores the laptop's original resolution.
+
+If a narrow black strip remains at the top of the laptop screen after returning,
+check whether an app on that screen is still in full screen. Leaving full screen
+restores the menu bar and the areas beside the camera housing.
 
 ---
 

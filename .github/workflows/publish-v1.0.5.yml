@@ -1,0 +1,26 @@
+name: Publish LidMate v1.0.5
+
+"on":
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-v1.0.5.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and publish DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "fa2230547123039049373dfc8f573df92dc35c3591480cab305dfc1bc42ca41c  downloads/LidMate-macOS-arm64.dmg" | sha256sum -c -
+          gh release create v1.0.5 downloads/LidMate-macOS-arm64.dmg \
+            --target "$GITHUB_SHA" \
+            --title "LidMate v1.0.5" \
+            --notes "镜像时优先保留笔记本内屏正常分辨率，并由 macOS 自动选择每块屏的刷新率；失败后回退到共同模式，修复切走输入源后内屏黑边。适用于 Apple Silicon、macOS 13+。安装包采用临时签名，未经过 Apple 公证。"

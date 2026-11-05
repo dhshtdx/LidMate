@@ -1,5 +1,5 @@
 #!/bin/bash
-# 只读：用两种 displayplacer 模式格式验证诊断能找到真实的共同镜像模式。
+# 只读：用两种 displayplacer 模式格式验证先试内屏正常比例，再回退共同模式。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -80,13 +80,29 @@ for format in one-line two-line; do
     LIDMATE_EXT_UUID="$EXT" LIDMATE_INT_UUID="$INT" LIDMATE_MAC_INPUT=15 \
     LIDMATE_LOG="$T/$format.log" LIDMATE_DOCTOR=1 \
     bash "$ROOT/src/resources/displaysync.sh")
+  if ! grep -Fq '1496x967 @ 自动刷新率' <<< "$output"; then
+    echo "❌ $format: 没有优先尝试内屏正常模式 1496x967"
+    exit 1
+  fi
+  if ! grep -Fq "id:$INT+$EXT res:1496x967 scaling:on" <<< "$output"; then
+    echo "❌ $format: 镜像命令没有使用内屏正常模式和自动刷新率"
+    exit 1
+  fi
   if ! grep -Fq '1280x800 @ 60Hz' <<< "$output"; then
-    echo "❌ $format: 没有找到共同模式 1280x800 @ 60Hz"
+    echo "❌ $format: 没有保留共同模式 1280x800 @ 60Hz 作为回退"
     exit 1
   fi
-  if ! grep -Fq "id:$INT+$EXT res:1280x800 hz:60" <<< "$output"; then
-    echo "❌ $format: 镜像命令缺少共同模式"
-    exit 1
-  fi
-  echo "✅ $format: 共同模式和镜像预览正确"
+  echo "✅ $format: 内屏正常模式优先、共同模式回退正确"
 done
+
+# 镜像成功后的黑边提示也必须能在 set -u 下执行。
+warning_line=$(rg 'log "  ↳ 注意：镜像模式' "$ROOT/src/resources/displaysync.sh")
+warning_output=$(bash -u -c '
+  after=1280x800
+  aspect_native=1.5470
+  aspect_now=1.6000
+  log() { printf "%s\n" "$*"; }
+  eval "$1"
+' _ "$warning_line")
+grep -Fq '1280x800' <<< "$warning_output"
+echo '✅ 镜像成功后的黑边提示没有触发未定义变量'
