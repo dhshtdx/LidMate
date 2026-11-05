@@ -346,7 +346,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             task.standardOutput = handle
             task.standardError = handle
         }
-        do { try task.run(); return task } catch {
+        task.terminationHandler = { [weak self] finished in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.log("\(script) 子进程退出 code=\(finished.terminationStatus) reason=\(finished.terminationReason)")
+                guard script == "displaysync.sh",
+                      self.displayTask === finished,
+                      self.defaults.bool(forKey: KEY_DISPLAY),
+                      self.configReady else { return }
+                self.displayTask = nil
+                self.log("显示器跟随意外退出，3 秒后重启")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    guard let self, self.displayTask == nil,
+                          self.defaults.bool(forKey: KEY_DISPLAY),
+                          self.configReady else { return }
+                    self.startDisplayFollow()
+                }
+            }
+        }
+        do {
+            try task.run()
+            log("\(script) 子进程 pid=\(task.processIdentifier)")
+            return task
+        } catch {
             log("启动 \(script) 失败: \(error.localizedDescription)")
             return nil
         }
